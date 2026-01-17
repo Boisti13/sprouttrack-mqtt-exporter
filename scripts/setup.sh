@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Interactive setup helper for the exporter.
 # Writes ./config.yaml and ./.secrets.env
+# Optionally installs as a systemd service under /opt
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -14,10 +15,70 @@ need_cmd() {
   }
 }
 
-need_cmd sqlite3
-need_cmd sed
-need_cmd tr
-need_cmd awk
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+is_root() { [[ "${EUID:-$(id -u)}" -eq 0 ]]; }
+
+run_root() {
+  # Run a command that requires root.
+  # - If already root: run directly
+  # - Else: use sudo if available
+  if is_root; then
+    "$@"
+  else
+    if have_cmd sudo; then
+      sudo "$@"
+    else
+      echo "ERROR: Need root privileges to run: $* (sudo not available)." >&2
+      exit 1
+    fi
+  fi
+}
+
+detect_py_ver() {
+  python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true
+}
+
+detect_venv_pkgs() {
+  # Return package candidates in best-first order for Debian/Ubuntu.
+  # Example output: "python3.12-venv python3-venv"
+  local pyver
+  pyver="$(detect_py_ver)"
+  if [[ -n "$pyver" ]]; then
+    echo "python3.${pyver}-venv python3-venv"
+  else
+    echo "python3-venv"
+  fi
+}
+
+ensure_venv_support() {
+  # If venv is usable, do nothing. Else install the distro package providing ensurepip/venv.
+  if python3 -c 'import venv' >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo
+  echo "Python venv support not available (ensurepip/venv missing). Installing venv package..."
+
+  if have_cmd apt-get; then
+    run_root apt-get update -y
+
+    local pkgs p
+    pkgs="$(detect_venv_pkgs)"
+    for p in $pkgs; do
+      if run_root apt-get install -y "$p"; then
+        echo "Installed: $p"
+        return 0
+      fi
+    done
+
+    echo "ERROR: Could not install python venv support. Tried: $pkgs" >&2
+    exit 1
+  fi
+
+  echo "ERROR: Unsupported package manager; install python3-venv manually." >&2
+  exit 1
+}
 
 prompt() {
   local var="$1"; shift
@@ -175,10 +236,23 @@ select_baby() {
   fi
 }
 
-
 main() {
+  need_cmd sqlite3
+  need_cmd sed
+  need_cmd tr
+  need_cmd awk
+
   echo "Sprout Track -> HA MQTT Exporter setup"
   echo "Project: $PROJECT_ROOT"
+
+  echo
+  echo "Environment:"
+  echo "  [1] Proxmox / LXC (no sudo assumed; typically running as root)"
+  echo "  [2] Bare metal / VM (sudo may be used if not root)"
+  local env_choice
+  read -r -p "Choose [1/2] (default 1): " env_choice || true
+  env_choice="${env_choice:-1}"
+  # Note: behavior is auto-detected via is_root/sudo; this prompt is UX-only.
 
   select_db
   select_baby
@@ -200,7 +274,7 @@ main() {
 
   local INSTALL_ROOT=""
   if [[ "$install_choice" == "2" ]]; then
-    if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    if ! is_root; then
       echo "ERROR: systemd install requires root. Re-run as root (or choose option 1)." >&2
       exit 1
     fi
@@ -240,7 +314,28 @@ SECRETS
     echo "Wrote: $(pwd)/config.yaml"
     echo "Wrote: $(pwd)/.secrets.env (mode 600)"
     echo
-    echo "Next:"
+
+    local run_now="n"
+    read -r -p "Run exporter now (create venv + install deps)? [y/N]: " run_now || true
+    run_now="${run_now:-n}"
+
+    if [[ "$run_now" =~ ^[Yy]$ ]]; then
+      need_cmd python3
+      ensure_venv_support
+
+      if [[ ! -d ".venv" ]]; then
+        python3 -m venv .venv
+      fi
+
+      .venv/bin/pip install --upgrade pip
+      .venv/bin/pip install -r requirements.txt
+
+      echo
+      echo "Starting exporter (Ctrl+C to stop)..."
+      exec .venv/bin/python -m sprouttrack_exporter --config config.yaml --secrets .secrets.env
+    fi
+
+    echo "Next (manual):"
     echo "  python3 -m venv .venv"
     echo "  source .venv/bin/activate"
     echo "  pip install -r requirements.txt"
@@ -263,6 +358,7 @@ SECRETS
 
   # Create venv + install requirements
   need_cmd python3
+  ensure_venv_support
   python3 -m venv "$INSTALL_ROOT/.venv"
   "$INSTALL_ROOT/.venv/bin/pip" install --upgrade pip
   "$INSTALL_ROOT/.venv/bin/pip" install -r "$INSTALL_ROOT/requirements.txt"
