@@ -1,0 +1,15 @@
+[Unit]
+Description=Sprout Track -> Home Assistant MQTT Exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sprouttrack-ha-exporter
+EnvironmentFile=/opt/sprouttrack-ha-exporter/.secrets.env
+ExecStart=/opt/sprouttrack-ha-exporter/.venv/bin/python -m sprouttrack_exporter --config /opt/sprouttrack-ha-exporter/config.yaml --secrets /opt/sprouttrack-ha-exporter/.secrets.env
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

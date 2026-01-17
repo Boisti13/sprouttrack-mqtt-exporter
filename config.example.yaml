@@ -1,0 +1,22 @@
+# Copy to config.yaml and adjust (or run scripts/setup.sh)
+
+db_path: /root/sprout-track/db/baby-tracker.db
+baby_id: ""
+baby_name: ""
+
+# Used to make stable Home Assistant entity_ids via MQTT discovery (object_id)
+# Example: sensor.sprout_track_arthur_arthur_diapers_today
+ha_object_id_prefix: "sprout_track_arthur_arthur"
+
+poll_sec: 300
+
+mqtt:
+  host: 192.168.178.108
+  port: 1883
+
+base_topic: sprouttrack
+ha_discovery_prefix: homeassistant
+
+# Day boundary for *today* counters.
+# Use "Europe/Berlin" to match local expectations, or "UTC".
+timezone: Europe/Berlin
