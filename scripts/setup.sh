@@ -148,11 +148,6 @@ main() {
   prompt_secret MQTT_PASS "MQTT password (leave empty if none)"
   prompt POLL_SEC "Poll interval (seconds)" "300"
 
-  local bn_slug
-  bn_slug="$(slugify "$BABY_NAME")"
-  local default_prefix="sprout_track_${bn_slug}_${bn_slug}"
-  prompt HA_PREFIX "Home Assistant object_id prefix" "$default_prefix"
-
   echo
   echo "Install options:"
   echo "  [1] Dev setup only (write config.yaml + .secrets.env in this folder)"
@@ -177,7 +172,7 @@ db_path: ${DB_PATH}
 baby_id: "${BABY_ID}"
 baby_name: "${BABY_NAME}"
 
-ha_object_id_prefix: "${HA_PREFIX}"
+baby_slug: "$(slugify "$BABY_NAME")"
 
 poll_sec: ${POLL_SEC}
 

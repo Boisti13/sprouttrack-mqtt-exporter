@@ -20,7 +20,7 @@ class AppConfig:
     db_path: str
     baby_id: str
     baby_name: str
-    ha_object_id_prefix: str
+    baby_slug: str
 
     poll_sec: int = 300
 
@@ -60,7 +60,7 @@ def build_config(cfg: Dict[str, Any], *, mqtt_user: str = "", mqtt_pass: str = "
         db_path=str(_require(cfg, "db_path")),
         baby_id=str(_require(cfg, "baby_id")),
         baby_name=str(_require(cfg, "baby_name")),
-        ha_object_id_prefix=str(_require(cfg, "ha_object_id_prefix")),
+        baby_slug=str(_require(cfg, "baby_slug")),
         poll_sec=int(cfg.get("poll_sec", 300)),
         mqtt=MqttConfig(host=host, port=port, username=str(mqtt_user or ""), password=str(mqtt_pass or "")),
         base_topic=str(cfg.get("base_topic", "sprouttrack")),

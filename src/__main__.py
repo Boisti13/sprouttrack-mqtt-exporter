@@ -64,7 +64,7 @@ def main(argv: list[str]) -> int:
         base_topic=cfg.base_topic,
         baby_id=cfg.baby_id,
         baby_name=cfg.baby_name,
-        ha_object_id_prefix=cfg.ha_object_id_prefix,
+        baby_slug=cfg.baby_slug,
     )
 
     # Online

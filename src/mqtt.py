@@ -37,9 +37,9 @@ def mqtt_publish(client: mqtt.Client, topic: str, payload: Any, retain: bool = T
     client.publish(topic, payload, qos=0, retain=retain)
 
 
-def build_device(baby_id: str) -> Dict[str, Any]:
+def build_device() -> Dict[str, Any]:
     return {
-        "identifiers": [f"sprouttrack_{baby_id}"],
+        "identifiers": ["sprouttrack"],
         "name": "Sprout Track",
         "manufacturer": "Oak-and-Sprout",
         "model": "sprout-track (sqlite->mqtt)",
@@ -53,9 +53,9 @@ def publish_discovery(
     base_topic: str,
     baby_id: str,
     baby_name: str,
-    ha_object_id_prefix: str,
+    baby_slug: str,
 ) -> None:
-    device = build_device(baby_id)
+    device = build_device()
     availability_topic = f"{base_topic}/{baby_id}/availability"
 
     for s in SENSORS:
@@ -65,7 +65,7 @@ def publish_discovery(
         cfg: Dict[str, Any] = {
             "name": f"{baby_name} {s.name_suffix}",
             "unique_id": f"sprouttrack_{baby_id}_{s.key}",
-            "object_id": f"{ha_object_id_prefix}_{s.key}",
+            "object_id": f"sprout_track_{baby_slug}_{s.key}",
             "state_topic": state_topic,
             "availability_topic": availability_topic,
             "device": device,

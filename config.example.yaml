@@ -3,10 +3,9 @@
 db_path: /root/sprout-track/db/baby-tracker.db
 baby_id: ""
 baby_name: ""
+baby_slug: ""
 
 # Used to make stable Home Assistant entity_ids via MQTT discovery (object_id)
-# Example: sensor.sprout_track_arthur_arthur_diapers_today
-ha_object_id_prefix: "sprout_track_arthur_arthur"
 
 poll_sec: 300
 
