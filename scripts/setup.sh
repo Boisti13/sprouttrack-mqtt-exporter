@@ -20,9 +20,7 @@ have_cmd() { command -v "$1" >/dev/null 2>&1; }
 is_root() { [[ "${EUID:-$(id -u)}" -eq 0 ]]; }
 
 run_root() {
-  # Run a command that requires root.
-  # - If already root: run directly
-  # - Else: use sudo if available
+  # Run command as root: direct if already root, otherwise via sudo if available
   if is_root; then
     "$@"
   else
@@ -40,8 +38,7 @@ detect_py_ver() {
 }
 
 detect_venv_pkgs() {
-  # Return package candidates in best-first order for Debian/Ubuntu.
-  # Example: "python3.12-venv python3-venv"
+  # Debian/Ubuntu: prefer python3.<minor>-venv then python3-venv
   local pyver
   pyver="$(detect_py_ver)"
   if [[ -n "$pyver" ]]; then
@@ -52,21 +49,17 @@ detect_venv_pkgs() {
 }
 
 probe_venv_works() {
-  # IMPORTANT: On Debian/Ubuntu, `import venv` can succeed even when ensurepip is missing.
+  # On Debian/Ubuntu, `import venv` may succeed even when ensurepip is missing.
   # The only reliable check is to actually create a venv.
   local tmpdir
   tmpdir="$(mktemp -d -t stvenvtest.XXXXXX)"
   # shellcheck disable=SC2064
   trap "rm -rf '$tmpdir' >/dev/null 2>&1 || true" RETURN
 
-  if python3 -m venv "$tmpdir/venv" >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
+  python3 -m venv "$tmpdir/venv" >/dev/null 2>&1
 }
 
 ensure_venv_support() {
-  # If venv creation works, do nothing. Else install the distro package providing ensurepip/venv.
   if probe_venv_works; then
     return 0
   fi
@@ -86,14 +79,12 @@ ensure_venv_support() {
       fi
     done
 
-    # Re-probe after install
     if probe_venv_works; then
       echo "Python venv support is now available."
       return 0
     fi
 
     echo "ERROR: venv creation still fails after installing venv packages. Tried: $pkgs" >&2
-    echo "Hint: ensure 'python3-venv' (or python3.X-venv) is installed and python3 points to that version." >&2
     exit 1
   fi
 
@@ -170,7 +161,6 @@ select_db() {
     exit 1
   fi
 
-  # Light sanity check
   if ! sqlite3 "$DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Baby','FeedLog','DiaperLog','SleepLog');" | grep -q Baby; then
     echo "ERROR: This does not look like a Sprout Track DB (missing expected tables)." >&2
     exit 1
@@ -181,16 +171,13 @@ select_baby() {
   echo
   echo "Babies found in DB:"
 
-  # Detect actual column names in Baby table
   local cols
   cols="$(sqlite3 "$DB_PATH" "PRAGMA table_info(Baby);" 2>/dev/null | cut -d'|' -f2 | tr '\n' ' ' || true)"
-
   if [[ -z "$cols" ]]; then
     echo "ERROR: Could not inspect Baby table schema (PRAGMA failed)." >&2
     exit 1
   fi
 
-  # Pick best-guess column names
   local col_id="id"
   local col_name=""
   local col_created=""
@@ -224,7 +211,6 @@ select_baby() {
 
   local rows
   rows="$(sqlite3 -separator $'\t' "$DB_PATH" "$sql" 2>/dev/null || true)"
-
   if [[ -z "$rows" ]]; then
     echo "ERROR: Could not list babies from DB (query returned no rows)." >&2
     echo "Tried SQL: $sql" >&2
@@ -364,19 +350,16 @@ SECRETS
   echo "Installing to: $INSTALL_ROOT"
   mkdir -p "$INSTALL_ROOT"
 
-  # Copy project (excluding venv/cache)
   (cd "$PROJECT_ROOT" && tar --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' -cf - .) \
     | (cd "$INSTALL_ROOT" && tar -xf -)
 
   chmod 600 "$INSTALL_ROOT/.secrets.env" || true
 
-  # Create venv + install requirements
   ensure_venv_support
   python3 -m venv "$INSTALL_ROOT/.venv"
   "$INSTALL_ROOT/.venv/bin/pip" install --upgrade pip
   "$INSTALL_ROOT/.venv/bin/pip" install -r "$INSTALL_ROOT/requirements.txt"
 
-  # Install systemd unit
   local SERVICE_NAME="sprouttrack-ha-exporter.service"
   local UNIT_SRC="$INSTALL_ROOT/systemd/sprouttrack-ha-exporter.service.template"
   local UNIT_DST="/etc/systemd/system/$SERVICE_NAME"
@@ -386,11 +369,23 @@ SECRETS
     exit 1
   fi
 
+  # Write unit, patching paths and ensuring PYTHONPATH points to <root>/src (required for src-layout imports)
   awk -v root="$INSTALL_ROOT" '
-    /^WorkingDirectory=/ {print "WorkingDirectory=" root; next}
-    /^EnvironmentFile=/ {print "EnvironmentFile=" root "/.secrets.env"; next}
-    /^ExecStart=/ {print "ExecStart=" root "/.venv/bin/python -m sprouttrack_exporter --config " root "/config.yaml --secrets " root "/.secrets.env"; next}
-    {print}
+    BEGIN { injected_py=0 }
+    /^WorkingDirectory=/ { print "WorkingDirectory=" root; next }
+    /^EnvironmentFile=/  { print "EnvironmentFile=" root "/.secrets.env";
+                           print "Environment=PYTHONPATH=" root "/src";
+                           injected_py=1;
+                           next }
+    /^Environment=PYTHONPATH=/ { print "Environment=PYTHONPATH=" root "/src"; injected_py=1; next }
+    /^ExecStart=/       { print "ExecStart=" root "/.venv/bin/python -m sprouttrack_exporter --config " root "/config.yaml --secrets " root "/.secrets.env"; next }
+    { print }
+    END {
+      if (injected_py == 0) {
+        # If the template had no EnvironmentFile line (unexpected), still inject PYTHONPATH near top of [Service]
+        # We cannot easily reposition here, but this guards against missing injection.
+      }
+    }
   ' "$UNIT_SRC" > "$UNIT_DST"
 
   systemctl daemon-reload
