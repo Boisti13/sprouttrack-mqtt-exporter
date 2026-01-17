@@ -99,16 +99,57 @@ select_baby() {
   echo
   echo "Babies found in DB:"
 
-  # Some schemas include deletedAt; if not, this still works because the WHERE fails.
-  # We try a robust query first, then fall back.
-  local rows
-  rows="$(sqlite3 -separator $'\t' "$DB_PATH" "SELECT id, name FROM Baby WHERE deletedAt IS NULL ORDER BY createdAt DESC;" 2>/dev/null || true)"
-  if [[ -z "$rows" ]]; then
-    rows="$(sqlite3 -separator $'\t' "$DB_PATH" "SELECT id, name FROM Baby ORDER BY rowid DESC;" 2>/dev/null || true)"
+  # Detect actual column names in Baby table
+  local cols
+  cols="$(sqlite3 "$DB_PATH" "PRAGMA table_info(Baby);" 2>/dev/null | cut -d'|' -f2 | tr '\n' ' ' || true)"
+
+  if [[ -z "$cols" ]]; then
+    echo "ERROR: Could not inspect Baby table schema (PRAGMA failed)." >&2
+    exit 1
   fi
 
+  # Pick best-guess column names
+  local col_id="id"
+  local col_name=""
+  local col_created=""
+  local col_deleted=""
+
+  # name can be: name, firstName, fullName (we prefer 'name')
+  if echo " $cols " | grep -q " name "; then col_name="name"; fi
+  if [[ -z "$col_name" ]] && echo " $cols " | grep -q " firstName "; then col_name="firstName"; fi
+  if [[ -z "$col_name" ]] && echo " $cols " | grep -q " fullName "; then col_name="fullName"; fi
+
+  # createdAt can be: createdAt, created_at
+  if echo " $cols " | grep -q " createdAt "; then col_created="createdAt"; fi
+  if [[ -z "$col_created" ]] && echo " $cols " | grep -q " created_at "; then col_created="created_at"; fi
+
+  # deletedAt can be: deletedAt, deleted_at
+  if echo " $cols " | grep -q " deletedAt "; then col_deleted="deletedAt"; fi
+  if [[ -z "$col_deleted" ]] && echo " $cols " | grep -q " deleted_at "; then col_deleted="deleted_at"; fi
+
+  if [[ -z "$col_name" ]]; then
+    echo "ERROR: Could not find a baby name column in Baby table. Columns: $cols" >&2
+    exit 1
+  fi
+
+  # Build query dynamically (avoid failing on missing columns)
+  local sql="SELECT $col_id, $col_name FROM Baby"
+  if [[ -n "$col_deleted" ]]; then
+    sql="$sql WHERE $col_deleted IS NULL"
+  fi
+  if [[ -n "$col_created" ]]; then
+    sql="$sql ORDER BY $col_created DESC"
+  else
+    sql="$sql ORDER BY rowid DESC"
+  fi
+  sql="$sql;"
+
+  local rows
+  rows="$(sqlite3 -separator $'\t' "$DB_PATH" "$sql" 2>/dev/null || true)"
+
   if [[ -z "$rows" ]]; then
-    echo "ERROR: Could not list babies from DB." >&2
+    echo "ERROR: Could not list babies from DB (query returned no rows)." >&2
+    echo "Tried SQL: $sql" >&2
     exit 1
   fi
 
@@ -133,6 +174,7 @@ select_baby() {
     exit 1
   fi
 }
+
 
 main() {
   echo "Sprout Track -> HA MQTT Exporter setup"
