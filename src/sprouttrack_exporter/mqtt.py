@@ -16,6 +16,7 @@ class SensorDef:
     unit: Optional[str] = None
 
 
+# Keep this list aligned with metrics.py output keys
 SENSORS: list[SensorDef] = [
     SensorDef("time_since_feed", "Time Since Feed", icon="mdi:timer-outline"),
     SensorDef("time_since_diaper", "Time Since Diaper", icon="mdi:timer-outline"),
@@ -38,8 +39,12 @@ def mqtt_publish(client: mqtt.Client, topic: str, payload: Any, retain: bool = T
 
 
 def build_device() -> Dict[str, Any]:
+    """
+    Single HA device for the whole integration.
+    Sensors will carry the baby's name via entity_id/object_id and friendly name.
+    """
     return {
-        "identifiers": ["sprouttrack"],
+        "identifiers": ["sprouttrack_exporter"],
         "name": "Sprout Track Test",
         "manufacturer": "Oak-and-Sprout",
         "model": "sprout-track (sqlite->mqtt)",
@@ -53,23 +58,30 @@ def publish_discovery(
     base_topic: str,
     baby_id: str,
     baby_name: str,
-    baby_slug: str,
+    ha_object_id_prefix: str,
 ) -> None:
     device = build_device()
     availability_topic = f"{base_topic}/{baby_id}/availability"
 
     for s in SENSORS:
+        # Discovery topic format: homeassistant/<component>/<node_id>/<object_id>/config
+        # We use a stable node_id ("sprouttrack") and stable unique_id per baby+metric.
         cfg_topic = f"{discovery_prefix}/sensor/sprouttrack/{baby_id}_{s.key}/config"
         state_topic = f"{base_topic}/{baby_id}/sensor/{s.key}/state"
 
         cfg: Dict[str, Any] = {
+            # Friendly name (what you see in HA UI)
             "name": f"{baby_name} {s.name_suffix}",
+            # Must be globally unique in HA
             "unique_id": f"sprouttrack_{baby_id}_{s.key}",
-            "object_id": f"sprout_track_{baby_slug}_{s.key}",
+            # Controls entity_id: sensor.<object_id>
+            # Example: sprout_track_arthur_diapers_today
+            "object_id": f"{ha_object_id_prefix}_{s.key}",
             "state_topic": state_topic,
             "availability_topic": availability_topic,
             "device": device,
         }
+
         if s.icon:
             cfg["icon"] = s.icon
         if s.device_class:
@@ -77,4 +89,5 @@ def publish_discovery(
         if s.unit:
             cfg["unit_of_measurement"] = s.unit
 
+        # Discovery configs must be retained
         mqtt_publish(client, cfg_topic, cfg, retain=True)
