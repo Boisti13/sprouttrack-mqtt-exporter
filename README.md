@@ -33,7 +33,7 @@ Run the interactive setup script from the project directory. It will:
 - write `config.yaml` + `.secrets.env`
 
 ```bash
-cd sprouttrack-ha-exporter
+cd sprouttrack-mqtt-exporter
 bash scripts/setup.sh
 ```
 
