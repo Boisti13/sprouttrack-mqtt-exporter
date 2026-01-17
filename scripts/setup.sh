@@ -282,7 +282,7 @@ main() {
       echo "ERROR: systemd install requires root. Re-run as root (or choose option 1)." >&2
       exit 1
     fi
-    prompt INSTALL_ROOT "Install directory" "/opt/sprouttrack-ha-exporter"
+    prompt INSTALL_ROOT "Install directory" "/opt/sprouttrack-mqtt-exporter"
   fi
 
   cat > config.yaml <<CFG
@@ -360,8 +360,8 @@ SECRETS
   "$INSTALL_ROOT/.venv/bin/pip" install --upgrade pip
   "$INSTALL_ROOT/.venv/bin/pip" install -r "$INSTALL_ROOT/requirements.txt"
 
-  local SERVICE_NAME="sprouttrack-ha-exporter.service"
-  local UNIT_SRC="$INSTALL_ROOT/systemd/sprouttrack-ha-exporter.service.template"
+  local SERVICE_NAME="sprouttrack-mqtt-exporter.service"
+  local UNIT_SRC="$INSTALL_ROOT/systemd/sprouttrack-mqtt-exporter.service.template"
   local UNIT_DST="/etc/systemd/system/$SERVICE_NAME"
 
   if [[ ! -f "$UNIT_SRC" ]]; then
