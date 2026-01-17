@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/sprouttrack-mqtt-exporter
+Environment=PYTHONPATH=/opt/sprouttrack-mqtt-exporter/src
 EnvironmentFile=/opt/sprouttrack-mqtt-exporter/.secrets.env
 ExecStart=/opt/sprouttrack-mqtt-exporter/.venv/bin/python -m sprouttrack_exporter --config /opt/sprouttrack-mqtt-exporter/config.yaml --secrets /opt/sprouttrack-mqtt-exporter/.secrets.env
 Restart=always
