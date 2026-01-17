@@ -26,7 +26,7 @@ class AppConfig:
 
     mqtt: MqttConfig = MqttConfig(host="127.0.0.1", port=1883)
 
-    base_topic: str = "sprouttracktest"
+    base_topic: str = "sprouttrack"
     ha_discovery_prefix: str = "homeassistant"
     timezone: str = "Europe/Berlin"
 
