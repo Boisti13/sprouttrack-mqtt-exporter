@@ -41,7 +41,7 @@ detect_py_ver() {
 
 detect_venv_pkgs() {
   # Return package candidates in best-first order for Debian/Ubuntu.
-  # Example output: "python3.12-venv python3-venv"
+  # Example: "python3.12-venv python3-venv"
   local pyver
   pyver="$(detect_py_ver)"
   if [[ -n "$pyver" ]]; then
@@ -51,14 +51,28 @@ detect_venv_pkgs() {
   fi
 }
 
+probe_venv_works() {
+  # IMPORTANT: On Debian/Ubuntu, `import venv` can succeed even when ensurepip is missing.
+  # The only reliable check is to actually create a venv.
+  local tmpdir
+  tmpdir="$(mktemp -d -t stvenvtest.XXXXXX)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmpdir' >/dev/null 2>&1 || true" RETURN
+
+  if python3 -m venv "$tmpdir/venv" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
 ensure_venv_support() {
-  # If venv is usable, do nothing. Else install the distro package providing ensurepip/venv.
-  if python3 -c 'import venv' >/dev/null 2>&1; then
+  # If venv creation works, do nothing. Else install the distro package providing ensurepip/venv.
+  if probe_venv_works; then
     return 0
   fi
 
   echo
-  echo "Python venv support not available (ensurepip/venv missing). Installing venv package..."
+  echo "Python venv creation failed (ensurepip missing). Installing venv package..."
 
   if have_cmd apt-get; then
     run_root apt-get update -y
@@ -68,11 +82,18 @@ ensure_venv_support() {
     for p in $pkgs; do
       if run_root apt-get install -y "$p"; then
         echo "Installed: $p"
-        return 0
+        break
       fi
     done
 
-    echo "ERROR: Could not install python venv support. Tried: $pkgs" >&2
+    # Re-probe after install
+    if probe_venv_works; then
+      echo "Python venv support is now available."
+      return 0
+    fi
+
+    echo "ERROR: venv creation still fails after installing venv packages. Tried: $pkgs" >&2
+    echo "Hint: ensure 'python3-venv' (or python3.X-venv) is installed and python3 points to that version." >&2
     exit 1
   fi
 
@@ -175,16 +196,13 @@ select_baby() {
   local col_created=""
   local col_deleted=""
 
-  # name can be: name, firstName, fullName (we prefer 'name')
   if echo " $cols " | grep -q " name "; then col_name="name"; fi
   if [[ -z "$col_name" ]] && echo " $cols " | grep -q " firstName "; then col_name="firstName"; fi
   if [[ -z "$col_name" ]] && echo " $cols " | grep -q " fullName "; then col_name="fullName"; fi
 
-  # createdAt can be: createdAt, created_at
   if echo " $cols " | grep -q " createdAt "; then col_created="createdAt"; fi
   if [[ -z "$col_created" ]] && echo " $cols " | grep -q " created_at "; then col_created="created_at"; fi
 
-  # deletedAt can be: deletedAt, deleted_at
   if echo " $cols " | grep -q " deletedAt "; then col_deleted="deletedAt"; fi
   if [[ -z "$col_deleted" ]] && echo " $cols " | grep -q " deleted_at "; then col_deleted="deleted_at"; fi
 
@@ -193,7 +211,6 @@ select_baby() {
     exit 1
   fi
 
-  # Build query dynamically (avoid failing on missing columns)
   local sql="SELECT $col_id, $col_name FROM Baby"
   if [[ -n "$col_deleted" ]]; then
     sql="$sql WHERE $col_deleted IS NULL"
@@ -241,6 +258,7 @@ main() {
   need_cmd sed
   need_cmd tr
   need_cmd awk
+  need_cmd python3
 
   echo "Sprout Track -> HA MQTT Exporter setup"
   echo "Project: $PROJECT_ROOT"
@@ -252,7 +270,7 @@ main() {
   local env_choice
   read -r -p "Choose [1/2] (default 1): " env_choice || true
   env_choice="${env_choice:-1}"
-  # Note: behavior is auto-detected via is_root/sudo; this prompt is UX-only.
+  # Behavior is auto-detected via is_root/sudo; this prompt is UX-only.
 
   select_db
   select_baby
@@ -287,7 +305,6 @@ main() {
 db_path: ${DB_PATH}
 baby_id: "${BABY_ID}"
 baby_name: "${BABY_NAME}"
-
 baby_slug: "$(slugify "$BABY_NAME")"
 
 poll_sec: ${POLL_SEC}
@@ -320,7 +337,6 @@ SECRETS
     run_now="${run_now:-n}"
 
     if [[ "$run_now" =~ ^[Yy]$ ]]; then
-      need_cmd python3
       ensure_venv_support
 
       if [[ ! -d ".venv" ]]; then
@@ -349,15 +365,12 @@ SECRETS
   mkdir -p "$INSTALL_ROOT"
 
   # Copy project (excluding venv/cache)
-  # Use tar to preserve permissions and keep this dependency-light.
   (cd "$PROJECT_ROOT" && tar --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' -cf - .) \
     | (cd "$INSTALL_ROOT" && tar -xf -)
 
-  # Ensure secrets are protected in install location
   chmod 600 "$INSTALL_ROOT/.secrets.env" || true
 
   # Create venv + install requirements
-  need_cmd python3
   ensure_venv_support
   python3 -m venv "$INSTALL_ROOT/.venv"
   "$INSTALL_ROOT/.venv/bin/pip" install --upgrade pip
@@ -373,7 +386,6 @@ SECRETS
     exit 1
   fi
 
-  # Patch WorkingDirectory/ExecStart paths if user changed install dir
   awk -v root="$INSTALL_ROOT" '
     /^WorkingDirectory=/ {print "WorkingDirectory=" root; next}
     /^EnvironmentFile=/ {print "EnvironmentFile=" root "/.secrets.env"; next}
