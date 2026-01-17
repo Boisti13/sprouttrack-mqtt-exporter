@@ -40,7 +40,7 @@ def mqtt_publish(client: mqtt.Client, topic: str, payload: Any, retain: bool = T
 def build_device() -> Dict[str, Any]:
     return {
         "identifiers": ["sprouttrack"],
-        "name": "Sprout Track",
+        "name": "Sprout Track Test",
         "manufacturer": "Oak-and-Sprout",
         "model": "sprout-track (sqlite->mqtt)",
     }
