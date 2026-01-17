@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Interactive setup helper for the exporter.
-# Writes ./config.yaml and ./.secrets.env
-# Optionally installs as a systemd service under /opt
-
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$PROJECT_ROOT"
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -15,154 +10,81 @@ need_cmd() {
   }
 }
 
-have_cmd() { command -v "$1" >/dev/null 2>&1; }
-
-is_root() { [[ "${EUID:-$(id -u)}" -eq 0 ]]; }
-
-run_root() {
-  # Run command as root: direct if already root, otherwise via sudo if available
-  if is_root; then
-    "$@"
-  else
-    if have_cmd sudo; then
-      sudo "$@"
-    else
-      echo "ERROR: Need root privileges to run: $* (sudo not available)." >&2
-      exit 1
-    fi
-  fi
-}
-
-detect_py_ver() {
-  python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true
-}
-
-detect_venv_pkgs() {
-  # Debian/Ubuntu: prefer python3.<minor>-venv then python3-venv
-  local pyver
-  pyver="$(detect_py_ver)"
-  if [[ -n "$pyver" ]]; then
-    echo "python3.${pyver}-venv python3-venv"
-  else
-    echo "python3-venv"
-  fi
-}
-
-probe_venv_works() {
-  # On Debian/Ubuntu, `import venv` may succeed even when ensurepip is missing.
-  # The only reliable check is to actually create a venv.
-  local tmpdir
-  tmpdir="$(mktemp -d -t stvenvtest.XXXXXX)"
-  # shellcheck disable=SC2064
-  trap "rm -rf '$tmpdir' >/dev/null 2>&1 || true" RETURN
-
-  python3 -m venv "$tmpdir/venv" >/dev/null 2>&1
-}
-
-ensure_venv_support() {
-  if probe_venv_works; then
-    return 0
-  fi
-
-  echo
-  echo "Python venv creation failed (ensurepip missing). Installing venv package..."
-
-  if have_cmd apt-get; then
-    run_root apt-get update -y
-
-    local pkgs p
-    pkgs="$(detect_venv_pkgs)"
-    for p in $pkgs; do
-      if run_root apt-get install -y "$p"; then
-        echo "Installed: $p"
-        break
-      fi
-    done
-
-    if probe_venv_works; then
-      echo "Python venv support is now available."
-      return 0
-    fi
-
-    echo "ERROR: venv creation still fails after installing venv packages. Tried: $pkgs" >&2
-    exit 1
-  fi
-
-  echo "ERROR: Unsupported package manager; install python3-venv manually." >&2
-  exit 1
+is_root() {
+  [[ "${EUID:-$(id -u)}" -eq 0 ]]
 }
 
 prompt() {
-  local var="$1"; shift
-  local text="$1"; shift
-  local def="${1:-}"
-
+  local var="$1"
+  local label="$2"
+  local def="${3:-}"
+  local val=""
   if [[ -n "$def" ]]; then
-    read -r -p "$text [$def]: " "$var" || true
-    if [[ -z "${!var}" ]]; then
-      printf -v "$var" '%s' "$def"
-    fi
+    read -r -p "$label [$def]: " val || true
+    val="${val:-$def}"
   else
-    read -r -p "$text: " "$var" || true
+    read -r -p "$label: " val || true
   fi
+  printf -v "$var" '%s' "$val"
 }
 
 prompt_secret() {
-  local var="$1"; shift
-  local text="$1"; shift
-  read -r -s -p "$text: " "$var" || true
+  local var="$1"
+  local label="$2"
+  local val=""
+  read -r -s -p "$label: " val || true
   echo
+  printf -v "$var" '%s' "$val"
 }
 
 slugify() {
-  # Lowercase, replace non-alnum with underscore, collapse repeats
-  echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//; s/_+/_/g'
+  # lower, replace non-alnum with underscore, collapse underscores, trim
+  echo "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//; s/_+/_/g'
 }
 
-find_db_candidates() {
-  local cands=()
-  local p
-  for p in \
-    "/root/sprout-track/db/baby-tracker.db" \
-    "/opt/sprout-track/db/baby-tracker.db" \
-    "$(pwd)/baby-tracker.db" \
-    "$(pwd)/db/baby-tracker.db" \
-    ; do
-    [[ -f "$p" ]] && cands+=("$p")
-  done
-  printf '%s\n' "${cands[@]:-}"
-}
-
-select_db() {
-  mapfile -t CANDS < <(find_db_candidates || true)
-
-  echo "Detected DB candidates:"
-  if [[ ${#CANDS[@]} -eq 0 ]]; then
-    echo "  (none found)"
-  else
-    local i
-    for i in "${!CANDS[@]}"; do
-      echo "  [$((i+1))] ${CANDS[$i]}"
-    done
-  fi
-  echo "  [0] Enter custom path"
-
-  local choice
-  read -r -p "Choose DB path: " choice
-  if [[ "$choice" == "0" || ${#CANDS[@]} -eq 0 ]]; then
-    prompt DB_PATH "Enter full path to baby-tracker.db"
-  else
-    local idx=$((choice-1))
-    DB_PATH="${CANDS[$idx]}"
+ensure_venv_support() {
+  # If python3 -m venv fails (Debian/Ubuntu missing python3-venv), install it.
+  if python3 -m venv /tmp/.venv_test_$$ >/dev/null 2>&1; then
+    rm -rf /tmp/.venv_test_$$
+    return 0
   fi
 
-  if [[ ! -f "$DB_PATH" ]]; then
-    echo "ERROR: DB not found at: $DB_PATH" >&2
+  echo "python3 venv support missing. Installing python3-venv..."
+  if ! is_root; then
+    echo "ERROR: cannot install python3-venv because we are not root." >&2
+    echo "Run as root, or install manually: apt install -y python3-venv" >&2
     exit 1
   fi
 
-  if ! sqlite3 "$DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Baby','FeedLog','DiaperLog','SleepLog');" | grep -q Baby; then
-    echo "ERROR: This does not look like a Sprout Track DB (missing expected tables)." >&2
+  apt-get update
+  apt-get install -y python3-venv
+}
+
+select_db() {
+  echo "Detected DB candidates:"
+  local candidates=()
+
+  if [[ -f "/root/sprout-track/db/baby-tracker.db" ]]; then
+    candidates+=("/root/sprout-track/db/baby-tracker.db")
+    echo "  [1] /root/sprout-track/db/baby-tracker.db"
+  fi
+  echo "  [0] Enter custom path"
+
+  local choice=""
+  read -r -p "Choose DB path: " choice || true
+  choice="${choice:-1}"
+
+  if [[ "$choice" == "0" ]]; then
+    prompt DB_PATH "Enter DB path"
+  else
+    local idx=$((choice-1))
+    DB_PATH="${candidates[$idx]:-}"
+  fi
+
+  if [[ -z "${DB_PATH:-}" || ! -f "$DB_PATH" ]]; then
+    echo "ERROR: DB path not found: ${DB_PATH:-<empty>}" >&2
     exit 1
   fi
 }
@@ -171,46 +93,11 @@ select_baby() {
   echo
   echo "Babies found in DB:"
 
-  local cols
-  cols="$(sqlite3 "$DB_PATH" "PRAGMA table_info(Baby);" 2>/dev/null | cut -d'|' -f2 | tr '\n' ' ' || true)"
-  if [[ -z "$cols" ]]; then
-    echo "ERROR: Could not inspect Baby table schema (PRAGMA failed)." >&2
-    exit 1
-  fi
-
-  local col_id="id"
-  local col_name=""
-  local col_created=""
-  local col_deleted=""
-
-  if echo " $cols " | grep -q " name "; then col_name="name"; fi
-  if [[ -z "$col_name" ]] && echo " $cols " | grep -q " firstName "; then col_name="firstName"; fi
-  if [[ -z "$col_name" ]] && echo " $cols " | grep -q " fullName "; then col_name="fullName"; fi
-
-  if echo " $cols " | grep -q " createdAt "; then col_created="createdAt"; fi
-  if [[ -z "$col_created" ]] && echo " $cols " | grep -q " created_at "; then col_created="created_at"; fi
-
-  if echo " $cols " | grep -q " deletedAt "; then col_deleted="deletedAt"; fi
-  if [[ -z "$col_deleted" ]] && echo " $cols " | grep -q " deleted_at "; then col_deleted="deleted_at"; fi
-
-  if [[ -z "$col_name" ]]; then
-    echo "ERROR: Could not find a baby name column in Baby table. Columns: $cols" >&2
-    exit 1
-  fi
-
-  local sql="SELECT $col_id, $col_name FROM Baby"
-  if [[ -n "$col_deleted" ]]; then
-    sql="$sql WHERE $col_deleted IS NULL"
-  fi
-  if [[ -n "$col_created" ]]; then
-    sql="$sql ORDER BY $col_created DESC"
-  else
-    sql="$sql ORDER BY rowid DESC"
-  fi
-  sql="$sql;"
-
+  # We rely on sqlite3 CLI for setup-time discovery.
+  local sql="SELECT id, name FROM Baby ORDER BY createdAt DESC;"
   local rows
   rows="$(sqlite3 -separator $'\t' "$DB_PATH" "$sql" 2>/dev/null || true)"
+
   if [[ -z "$rows" ]]; then
     echo "ERROR: Could not list babies from DB (query returned no rows)." >&2
     echo "Tried SQL: $sql" >&2
@@ -230,6 +117,7 @@ select_baby() {
   local choice
   read -r -p "Choose baby: " choice
   local idx=$((choice-1))
+
   BABY_ID="$(printf '%s' "${BABY_ROWS[$idx]}" | cut -f1)"
   BABY_NAME="$(printf '%s' "${BABY_ROWS[$idx]}" | cut -f2)"
 
@@ -248,15 +136,15 @@ main() {
 
   echo "Sprout Track -> HA MQTT Exporter setup"
   echo "Project: $PROJECT_ROOT"
-
   echo
+
   echo "Environment:"
   echo "  [1] Proxmox / LXC (no sudo assumed; typically running as root)"
   echo "  [2] Bare metal / VM (sudo may be used if not root)"
   local env_choice
   read -r -p "Choose [1/2] (default 1): " env_choice || true
   env_choice="${env_choice:-1}"
-  # Behavior is auto-detected via is_root/sudo; this prompt is UX-only.
+  # (We don’t actually use env_choice for logic; we detect root automatically.)
 
   select_db
   select_baby
@@ -267,6 +155,11 @@ main() {
   prompt MQTT_USER "MQTT username (leave empty if none)" ""
   prompt_secret MQTT_PASS "MQTT password (leave empty if none)"
   prompt POLL_SEC "Poll interval (seconds)" "300"
+
+  local bn_slug
+  bn_slug="$(slugify "$BABY_NAME")"
+  local default_prefix="sprout_track_${bn_slug}"
+  prompt HA_PREFIX "Home Assistant sensor object_id prefix" "$default_prefix"
 
   echo
   echo "Install options:"
@@ -291,7 +184,11 @@ main() {
 db_path: ${DB_PATH}
 baby_id: "${BABY_ID}"
 baby_name: "${BABY_NAME}"
-baby_slug: "$(slugify "$BABY_NAME")"
+baby_slug: "${bn_slug}"
+
+# Used for HA entity_ids via MQTT discovery object_id:
+# -> sensor.<ha_object_id_prefix>_<metric_key>
+ha_object_id_prefix: "${HA_PREFIX}"
 
 poll_sec: ${POLL_SEC}
 
@@ -317,31 +214,11 @@ SECRETS
     echo "Wrote: $(pwd)/config.yaml"
     echo "Wrote: $(pwd)/.secrets.env (mode 600)"
     echo
-
-    local run_now="n"
-    read -r -p "Run exporter now (create venv + install deps)? [y/N]: " run_now || true
-    run_now="${run_now:-n}"
-
-    if [[ "$run_now" =~ ^[Yy]$ ]]; then
-      ensure_venv_support
-
-      if [[ ! -d ".venv" ]]; then
-        python3 -m venv .venv
-      fi
-
-      .venv/bin/pip install --upgrade pip
-      .venv/bin/pip install -r requirements.txt
-
-      echo
-      echo "Starting exporter (Ctrl+C to stop)..."
-      exec .venv/bin/python -m sprouttrack_exporter --config config.yaml --secrets .secrets.env
-    fi
-
     echo "Next (manual):"
     echo "  python3 -m venv .venv"
     echo "  source .venv/bin/activate"
     echo "  pip install -r requirements.txt"
-    echo "  python -m sprouttrack_exporter --config config.yaml --secrets .secrets.env"
+    echo "  PYTHONPATH=\$(pwd)/src python -m sprouttrack_exporter --config config.yaml --secrets .secrets.env"
     return 0
   fi
 
@@ -369,23 +246,51 @@ SECRETS
     exit 1
   fi
 
-  # Write unit, patching paths and ensuring PYTHONPATH points to <root>/src (required for src-layout imports)
+  # Patch systemd unit:
+  # - WorkingDirectory
+  # - EnvironmentFile
+  # - Ensure PYTHONPATH=<root>/src (required for src-layout)
+  # - ExecStart
   awk -v root="$INSTALL_ROOT" '
-    BEGIN { injected_py=0 }
-    /^WorkingDirectory=/ { print "WorkingDirectory=" root; next }
-    /^EnvironmentFile=/  { print "EnvironmentFile=" root "/.secrets.env";
-                           print "Environment=PYTHONPATH=" root "/src";
-                           injected_py=1;
-                           next }
-    /^Environment=PYTHONPATH=/ { print "Environment=PYTHONPATH=" root "/src"; injected_py=1; next }
-    /^ExecStart=/       { print "ExecStart=" root "/.venv/bin/python -m sprouttrack_exporter --config " root "/config.yaml --secrets " root "/.secrets.env"; next }
-    { print }
-    END {
-      if (injected_py == 0) {
-        # If the template had no EnvironmentFile line (unexpected), still inject PYTHONPATH near top of [Service]
-        # We cannot easily reposition here, but this guards against missing injection.
-      }
+    BEGIN { in_service=0; has_py=0 }
+
+    /^\[Service\]/ {
+      in_service=1
+      print
+      next
     }
+
+    in_service==1 && has_py==0 && $0 ~ /^Environment=PYTHONPATH=/ {
+      has_py=1
+      print "Environment=PYTHONPATH=" root "/src"
+      next
+    }
+
+    /^WorkingDirectory=/ {
+      print "WorkingDirectory=" root
+      next
+    }
+
+    /^EnvironmentFile=/ {
+      print "EnvironmentFile=" root "/.secrets.env"
+      next
+    }
+
+    /^ExecStart=/ {
+      print "ExecStart=" root "/.venv/bin/python -m sprouttrack_exporter --config " root "/config.yaml --secrets " root "/.secrets.env"
+      next
+    }
+
+    # If we are inside [Service] and we reach the first non-Environment lines,
+    # inject PYTHONPATH once (if not already present).
+    in_service==1 && has_py==0 && $0 !~ /^Environment(File)?=/ && $0 !~ /^WorkingDirectory=/ {
+      print "Environment=PYTHONPATH=" root "/src"
+      has_py=1
+      print
+      next
+    }
+
+    { print }
   ' "$UNIT_SRC" > "$UNIT_DST"
 
   systemctl daemon-reload
