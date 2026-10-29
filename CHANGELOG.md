@@ -20,6 +20,9 @@ All notable changes, newest first.
   its messages go out before it exits.
 
 ### Changed
+- **Retired** (2026-10-29): Home Assistant now reads Sprout Track's own
+  hooks API with REST sensors; this exporter is no longer deployed. README
+  says so at the top.
 - **Same Home Assistant device and entities as the original single-file
   exporter** (2026-10-29): device `Sprout Track` with identifier
   `sprouttrack_<BABY_ID>`, no `object_id`, so an existing installation keeps

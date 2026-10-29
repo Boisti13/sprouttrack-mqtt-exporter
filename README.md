@@ -1,5 +1,7 @@
 # Sprout Track -> Home Assistant (MQTT Discovery) Exporter
 
+> **No longer used here (2026-10-29).** Sprout Track now has its own hooks API (`/api/hooks/v1/babies/<id>/status`), and Home Assistant reads it directly with REST sensors. This exporter dates from before that API; it still works with current databases but isn't deployed anywhere.
+
 This project reads Sprout Track's SQLite database and publishes a small set of derived metrics to MQTT, including Home Assistant MQTT Discovery so entities appear automatically.
 
 ## What it publishes
