@@ -54,21 +54,25 @@ def main(argv: list[str]) -> int:
     availability_topic = f"{cfg.base_topic}/{cfg.baby_id}/availability"
     client.will_set(availability_topic, "offline", retain=True)
 
+    # Discovery (retained) + online on every (re)connect: after a dropped
+    # connection the broker publishes the retained "offline" will.
+    def on_connect(client, userdata, flags, reason_code, properties) -> None:
+        if reason_code.is_failure:
+            return
+        publish_discovery(
+            client,
+            discovery_prefix=cfg.ha_discovery_prefix,
+            base_topic=cfg.base_topic,
+            baby_id=cfg.baby_id,
+            baby_name=cfg.baby_name,
+            baby_slug=cfg.baby_slug,
+        )
+        mqtt_publish(client, availability_topic, "online", retain=True)
+
+    client.on_connect = on_connect
+
     client.connect(cfg.mqtt.host, cfg.mqtt.port, keepalive=60)
     client.loop_start()
-
-    # Discovery (retained)
-    publish_discovery(
-        client,
-        discovery_prefix=cfg.ha_discovery_prefix,
-        base_topic=cfg.base_topic,
-        baby_id=cfg.baby_id,
-        baby_name=cfg.baby_name,
-        baby_slug=cfg.baby_slug,
-    )
-
-    # Online
-    mqtt_publish(client, availability_topic, "online", retain=True)
 
     def do_cycle() -> None:
         metrics = query_metrics(cfg.db_path, cfg.baby_id, cfg.timezone).values
