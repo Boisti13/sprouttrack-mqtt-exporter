@@ -65,7 +65,6 @@ def main(argv: list[str]) -> int:
             base_topic=cfg.base_topic,
             baby_id=cfg.baby_id,
             baby_name=cfg.baby_name,
-            baby_slug=cfg.baby_slug,
         )
         mqtt_publish(client, availability_topic, "online", retain=True)
 
@@ -73,6 +72,11 @@ def main(argv: list[str]) -> int:
 
     client.connect(cfg.mqtt.host, cfg.mqtt.port, keepalive=60)
     client.loop_start()
+
+    # QoS 0 messages sent before the connection is up are dropped, so wait for it
+    deadline = time.monotonic() + 30
+    while not client.is_connected() and time.monotonic() < deadline:
+        time.sleep(0.1)
 
     def do_cycle() -> None:
         metrics = query_metrics(cfg.db_path, cfg.baby_id, cfg.timezone).values
@@ -94,12 +98,16 @@ def main(argv: list[str]) -> int:
         mqtt_publish(client, f"{cfg.base_topic}/{cfg.baby_id}/last_error", "", retain=True)
 
     if args.once:
+        rc = 0
         try:
             do_cycle()
         except Exception as e:
             mqtt_publish(client, f"{cfg.base_topic}/{cfg.baby_id}/last_error", str(e), retain=True)
-            return 2
-        return 0
+            rc = 2
+        # Clean disconnect sends what is queued first and skips the last will
+        client.disconnect()
+        client.loop_stop()
+        return rc
 
     while True:
         try:

@@ -38,14 +38,14 @@ def mqtt_publish(client: mqtt.Client, topic: str, payload: Any, retain: bool = T
     client.publish(topic, payload, qos=0, retain=retain)
 
 
-def build_device() -> Dict[str, Any]:
+def build_device(baby_id: str) -> Dict[str, Any]:
     """
-    Single HA device for the whole integration.
-    Sensors will carry the baby's name via entity_id/object_id and friendly name.
+    One HA device per baby. Sensors carry the baby's name in their friendly name.
+    Keep identifiers and name stable: changing them makes HA create a new device.
     """
     return {
-        "identifiers": ["sprouttrack_exporter"],
-        "name": "Sprout Track Test",
+        "identifiers": [f"sprouttrack_{baby_id}"],
+        "name": "Sprout Track",
         "manufacturer": "Oak-and-Sprout",
         "model": "sprout-track (sqlite->mqtt)",
     }
@@ -58,9 +58,8 @@ def publish_discovery(
     base_topic: str,
     baby_id: str,
     baby_name: str,
-    ha_object_id_prefix: str,
 ) -> None:
-    device = build_device()
+    device = build_device(baby_id)
     availability_topic = f"{base_topic}/{baby_id}/availability"
 
     for s in SENSORS:
@@ -72,11 +71,8 @@ def publish_discovery(
         cfg: Dict[str, Any] = {
             # Friendly name (what you see in HA UI)
             "name": f"{baby_name} {s.name_suffix}",
-            # Must be globally unique in HA
+            # Must be globally unique in HA; HA keeps the entity_id it gave this ID
             "unique_id": f"sprouttrack_{baby_id}_{s.key}",
-            # Controls entity_id: sensor.<object_id>
-            # Example: sprout_track_arthur_diapers_today
-            "object_id": f"{ha_object_id_prefix}_{s.key}",
             "state_topic": state_topic,
             "availability_topic": availability_topic,
             "device": device,

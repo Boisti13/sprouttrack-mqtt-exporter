@@ -24,6 +24,10 @@ Sensors (keys):
 
 Note: `last_diaper_time` is intentionally **not** published.
 
+All sensors belong to one Home Assistant device, *Sprout Track* (identifier `sprouttrack_<BABY_ID>`). Discovery and `online` are re-sent on every reconnect, so the sensors come back after the broker or the network drops. Database timestamps may be epoch milliseconds (older Sprout Track) or ISO 8601 strings (since October 2026).
+
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ## Quick start (recommended)
 Run the interactive setup script from the project directory. It will:
 - detect/ask for the DB path
